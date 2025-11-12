@@ -30,7 +30,20 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
   const [maxAmmo] = useState(30);
   const [reloading, setReloading] = useState(false);
   const [crosshairPos, setCrosshairPos] = useState({ x: 50, y: 50 });
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  
   const gameAreaRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -64,14 +77,58 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
     };
   }, [isPlaying, monsters.length]);
 
-  const handleShoot = (e: React.MouseEvent) => {
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        streamRef.current = stream;
+        setCameraActive(true);
+        setCameraError(null);
+        toast.success('AR камера активирована!');
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      setCameraError('Не удалось получить доступ к камере');
+      toast.error('Не удалось включить камеру. Используется обычный режим.');
+      setCameraActive(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  };
+
+  const handleShoot = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isPlaying || ammo <= 0 || reloading) return;
 
     const rect = gameAreaRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    const clickX = ((e.clientX - rect.left) / rect.width) * 100;
-    const clickY = ((e.clientY - rect.top) / rect.height) * 100;
+    let clickX: number, clickY: number;
+
+    if ('touches' in e) {
+      const touch = e.touches[0] || e.changedTouches[0];
+      clickX = ((touch.clientX - rect.left) / rect.width) * 100;
+      clickY = ((touch.clientY - rect.top) / rect.height) * 100;
+    } else {
+      clickX = ((e.clientX - rect.left) / rect.width) * 100;
+      clickY = ((e.clientY - rect.top) / rect.height) * 100;
+    }
 
     setAmmo(prev => prev - 1);
 
@@ -119,16 +176,26 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
     }, 2000);
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleMouseMove = (e: React.MouseEvent | React.TouchEvent) => {
     const rect = gameAreaRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    let x: number, y: number;
+
+    if ('touches' in e) {
+      const touch = e.touches[0];
+      x = ((touch.clientX - rect.left) / rect.width) * 100;
+      y = ((touch.clientY - rect.top) / rect.height) * 100;
+    } else {
+      x = ((e.clientX - rect.left) / rect.width) * 100;
+      y = ((e.clientY - rect.top) / rect.height) * 100;
+    }
+    
     setCrosshairPos({ x, y });
   };
 
-  const startGame = () => {
+  const startGame = async () => {
+    await startCamera();
     setIsPlaying(true);
     setScore(0);
     setMonsters([]);
@@ -138,6 +205,7 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
 
   const endGame = () => {
     setIsPlaying(false);
+    stopCamera();
     toast.info(`Игра окончена! Ваш счёт: ${score}`);
     onBack();
   };
@@ -165,29 +233,57 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
 
       <div 
         ref={gameAreaRef}
-        className="flex-1 relative cursor-crosshair overflow-hidden bg-gradient-to-b from-sky-900 via-sky-700 to-green-900"
+        className="flex-1 relative cursor-crosshair overflow-hidden bg-black"
         onClick={handleShoot}
+        onTouchStart={handleShoot}
         onMouseMove={handleMouseMove}
+        onTouchMove={handleMouseMove}
       >
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMSkiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30"></div>
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="absolute inset-0 w-full h-full object-cover"
+          style={{ transform: 'scaleX(-1)' }}
+        />
+
+        {!cameraActive && isPlaying && (
+          <div className="absolute inset-0 bg-gradient-to-b from-sky-900 via-sky-700 to-green-900">
+            <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMSkiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30"></div>
+          </div>
+        )}
 
         {!isPlaying && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-10">
-            <div className="text-center space-y-6">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm z-10">
+            <div className="text-center space-y-6 p-8">
+              <div className="flex justify-center mb-4">
+                <div className="p-6 bg-primary/20 rounded-full border-4 border-primary/50 animate-pulse">
+                  <Icon name="Camera" size={64} className="text-primary" />
+                </div>
+              </div>
               <h2 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">
-                ГОТОВЫ К ОХОТЕ?
+                AR РЕЖИМ
               </h2>
               <p className="text-xl text-muted-foreground max-w-md">
-                Наведите прицел на монстров и кликайте для стрельбы. Не дайте им приблизиться!
+                Включите камеру для игры в дополненной реальности. Монстры появятся в вашем мире!
               </p>
+              {cameraError && (
+                <p className="text-destructive text-sm bg-destructive/20 px-4 py-2 rounded-lg border border-destructive/50">
+                  {cameraError}
+                </p>
+              )}
               <Button 
                 onClick={startGame}
                 size="lg"
                 className="h-16 px-12 text-xl bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary box-glow"
               >
-                <Icon name="Crosshair" size={32} className="mr-3" />
-                НАЧАТЬ
+                <Icon name="Camera" size={32} className="mr-3" />
+                ВКЛЮЧИТЬ КАМЕРУ
               </Button>
+              <p className="text-sm text-muted-foreground">
+                Для работы AR требуется доступ к камере устройства
+              </p>
             </div>
           </div>
         )}
@@ -195,7 +291,7 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
         {monsters.map(monster => (
           <div
             key={monster.id}
-            className="absolute transition-all duration-100"
+            className="absolute transition-all duration-100 pointer-events-none"
             style={{
               left: `${monster.x}%`,
               top: `${monster.y}%`,
@@ -203,10 +299,10 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
             }}
           >
             <div className="relative">
-              <div className="w-20 h-20 bg-gradient-to-br from-red-600 to-red-900 rounded-full flex items-center justify-center border-4 border-red-400 shadow-2xl animate-pulse">
-                <span className="text-4xl">👾</span>
+              <div className="w-24 h-24 bg-gradient-to-br from-red-600 to-red-900 rounded-full flex items-center justify-center border-4 border-red-400 shadow-2xl animate-pulse">
+                <span className="text-5xl">👾</span>
               </div>
-              <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 w-24 h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 w-28 h-3 bg-gray-900/80 rounded-full overflow-hidden border-2 border-gray-700">
                 <div 
                   className="h-full bg-gradient-to-r from-red-500 to-red-600 transition-all duration-200"
                   style={{ width: `${(monster.health / monster.maxHealth) * 100}%` }}
@@ -218,7 +314,7 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
 
         {isPlaying && (
           <div
-            className="absolute w-16 h-16 pointer-events-none z-30"
+            className="absolute w-20 h-20 pointer-events-none z-30"
             style={{
               left: `${crosshairPos.x}%`,
               top: `${crosshairPos.y}%`,
@@ -226,11 +322,19 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
             }}
           >
             <div className="relative w-full h-full">
-              <div className="absolute inset-0 border-2 border-primary rounded-full opacity-50"></div>
-              <div className="absolute top-1/2 left-0 w-full h-0.5 bg-primary"></div>
-              <div className="absolute left-1/2 top-0 h-full w-0.5 bg-primary"></div>
-              <div className="absolute inset-0 border-2 border-secondary rounded-full animate-ping"></div>
+              <div className="absolute inset-0 border-2 border-primary rounded-full opacity-60"></div>
+              <div className="absolute top-1/2 left-0 w-full h-0.5 bg-primary shadow-lg"></div>
+              <div className="absolute left-1/2 top-0 h-full w-0.5 bg-primary shadow-lg"></div>
+              <div className="absolute inset-2 border-2 border-secondary rounded-full animate-ping"></div>
+              <div className="absolute inset-0 bg-primary/10 rounded-full"></div>
             </div>
+          </div>
+        )}
+
+        {cameraActive && (
+          <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-10 bg-green-500/20 backdrop-blur border border-green-500/50 px-4 py-2 rounded-full flex items-center gap-2">
+            <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+            <span className="text-sm font-bold text-green-500">AR АКТИВЕН</span>
           </div>
         )}
       </div>
@@ -260,9 +364,11 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
             </Button>
           </div>
 
-          <div className="text-right">
+          <div className="text-right hidden md:block">
             <div className="text-sm text-muted-foreground uppercase mb-1">Совет</div>
-            <p className="text-lg font-medium">Стреляйте точно - патроны на вес золота!</p>
+            <p className="text-lg font-medium">
+              {cameraActive ? 'Двигайте телефон для поиска монстров!' : 'Наведите на монстров и стреляйте!'}
+            </p>
           </div>
         </div>
       </div>
