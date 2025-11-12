@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
+import { Canvas } from '@react-three/fiber';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
+import Gun3D from './Gun3D';
+import Zombie3D from './Zombie3D';
 
 interface ARGameplayProps {
   onBack: () => void;
@@ -17,6 +20,7 @@ interface Monster {
   id: number;
   x: number;
   y: number;
+  z: number;
   health: number;
   maxHealth: number;
   speed: number;
@@ -29,6 +33,7 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
   const [ammo, setAmmo] = useState(30);
   const [maxAmmo] = useState(30);
   const [reloading, setReloading] = useState(false);
+  const [firing, setFiring] = useState(false);
   const [crosshairPos, setCrosshairPos] = useState({ x: 50, y: 50 });
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -50,13 +55,16 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
 
     const spawnInterval = setInterval(() => {
       if (monsters.length < 5) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 8 + Math.random() * 4;
         const newMonster: Monster = {
           id: Date.now(),
-          x: Math.random() * 80 + 10,
-          y: 10 + Math.random() * 20,
+          x: Math.cos(angle) * distance,
+          y: 0,
+          z: Math.sin(angle) * distance,
           health: 100,
           maxHealth: 100,
-          speed: 0.5 + Math.random() * 0.5
+          speed: 0.02 + Math.random() * 0.02
         };
         setMonsters(prev => [...prev, newMonster]);
       }
@@ -64,10 +72,24 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
 
     const moveInterval = setInterval(() => {
       setMonsters(prev => 
-        prev.map(monster => ({
-          ...monster,
-          y: monster.y + monster.speed
-        })).filter(monster => monster.y < 90)
+        prev.map(monster => {
+          const dx = -monster.x;
+          const dz = -monster.z;
+          const length = Math.sqrt(dx * dx + dz * dz);
+          
+          if (length < 0.5) {
+            return monster;
+          }
+
+          return {
+            ...monster,
+            x: monster.x + (dx / length) * monster.speed,
+            z: monster.z + (dz / length) * monster.speed
+          };
+        }).filter(monster => {
+          const distance = Math.sqrt(monster.x * monster.x + monster.z * monster.z);
+          return distance > 0.5;
+        })
       );
     }, 50);
 
@@ -114,7 +136,7 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
   };
 
   const handleShoot = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isPlaying || ammo <= 0 || reloading) return;
+    if (!isPlaying || ammo <= 0 || reloading || firing) return;
 
     const rect = gameAreaRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -123,24 +145,28 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
 
     if ('touches' in e) {
       const touch = e.touches[0] || e.changedTouches[0];
-      clickX = ((touch.clientX - rect.left) / rect.width) * 100;
-      clickY = ((touch.clientY - rect.top) / rect.height) * 100;
+      clickX = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+      clickY = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
     } else {
-      clickX = ((e.clientX - rect.left) / rect.width) * 100;
-      clickY = ((e.clientY - rect.top) / rect.height) * 100;
+      clickX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      clickY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     }
 
     setAmmo(prev => prev - 1);
+    setFiring(true);
 
     let hit = false;
     setMonsters(prev => 
       prev.map(monster => {
+        const screenX = (monster.x / monster.z) * 2;
+        const screenY = (monster.y / monster.z) * 2;
+        
         const distance = Math.sqrt(
-          Math.pow(monster.x - clickX, 2) + 
-          Math.pow(monster.y - clickY, 2)
+          Math.pow(screenX - clickX, 2) + 
+          Math.pow(screenY - clickY, 2)
         );
 
-        if (distance < 8 && !hit) {
+        if (distance < 0.5 && !hit && monster.z < 0) {
           hit = true;
           const newHealth = monster.health - 35;
           
@@ -200,7 +226,7 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
     setScore(0);
     setMonsters([]);
     setAmmo(maxAmmo);
-    toast.success('Охота началась! Уничтожайте монстров!');
+    toast.success('Охота началась! Уничтожайте зомби!');
   };
 
   const endGame = () => {
@@ -211,7 +237,7 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col relative">
       <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between">
         <Button onClick={endGame} variant="ghost" size="lg" className="bg-card/80 backdrop-blur">
           <Icon name="ArrowLeft" size={24} className="mr-2" />
@@ -249,7 +275,7 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
         />
 
         {!cameraActive && isPlaying && (
-          <div className="absolute inset-0 bg-gradient-to-b from-sky-900 via-sky-700 to-green-900">
+          <div className="absolute inset-0 bg-gradient-to-b from-gray-800 via-gray-700 to-gray-900">
             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMSkiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30"></div>
           </div>
         )}
@@ -263,10 +289,10 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
                 </div>
               </div>
               <h2 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">
-                AR РЕЖИМ
+                AR ЗОМБИ-ШУТЕР
               </h2>
               <p className="text-xl text-muted-foreground max-w-md">
-                Включите камеру для игры в дополненной реальности. Монстры появятся в вашем мире!
+                Включите камеру для игры в дополненной реальности. 3D зомби появятся в вашем мире!
               </p>
               {cameraError && (
                 <p className="text-destructive text-sm bg-destructive/20 px-4 py-2 rounded-lg border border-destructive/50">
@@ -282,35 +308,40 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
                 ВКЛЮЧИТЬ КАМЕРУ
               </Button>
               <p className="text-sm text-muted-foreground">
-                Для работы AR требуется доступ к камере устройства
+                3D графика • Реалистичная физика • Анимация оружия
               </p>
             </div>
           </div>
         )}
 
-        {monsters.map(monster => (
-          <div
-            key={monster.id}
-            className="absolute transition-all duration-100 pointer-events-none"
-            style={{
-              left: `${monster.x}%`,
-              top: `${monster.y}%`,
-              transform: 'translate(-50%, -50%)'
-            }}
-          >
-            <div className="relative">
-              <div className="w-24 h-24 bg-gradient-to-br from-red-600 to-red-900 rounded-full flex items-center justify-center border-4 border-red-400 shadow-2xl animate-pulse">
-                <span className="text-5xl">👾</span>
-              </div>
-              <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 w-28 h-3 bg-gray-900/80 rounded-full overflow-hidden border-2 border-gray-700">
-                <div 
-                  className="h-full bg-gradient-to-r from-red-500 to-red-600 transition-all duration-200"
-                  style={{ width: `${(monster.health / monster.maxHealth) * 100}%` }}
+        {isPlaying && (
+          <div className="absolute inset-0 pointer-events-none">
+            <Canvas
+              camera={{ position: [0, 1.6, 0], fov: 75 }}
+              style={{ position: 'absolute', inset: 0 }}
+            >
+              <ambientLight intensity={0.5} />
+              <directionalLight position={[5, 5, 5]} intensity={1} castShadow />
+              <pointLight position={[0, 2, 0]} intensity={0.5} />
+
+              {monsters.map(monster => (
+                <Zombie3D
+                  key={monster.id}
+                  position={[monster.x, monster.y, monster.z]}
+                  health={monster.health}
+                  maxHealth={monster.maxHealth}
                 />
-              </div>
-            </div>
+              ))}
+
+              <Gun3D 
+                firing={firing} 
+                onFireComplete={() => setFiring(false)}
+              />
+
+              <fog attach="fog" args={['#000000', 5, 20]} />
+            </Canvas>
           </div>
-        ))}
+        )}
 
         {isPlaying && (
           <div
@@ -334,12 +365,12 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
         {cameraActive && (
           <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-10 bg-green-500/20 backdrop-blur border border-green-500/50 px-4 py-2 rounded-full flex items-center gap-2">
             <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-sm font-bold text-green-500">AR АКТИВЕН</span>
+            <span className="text-sm font-bold text-green-500">AR АКТИВЕН • 3D РЕЖИМ</span>
           </div>
         )}
       </div>
 
-      <div className="bg-card border-t-4 border-primary/30 p-6">
+      <div className="bg-card border-t-4 border-primary/30 p-6 z-10">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
@@ -365,9 +396,9 @@ const ARGameplay = ({ onBack, playerStats, updateStats }: ARGameplayProps) => {
           </div>
 
           <div className="text-right hidden md:block">
-            <div className="text-sm text-muted-foreground uppercase mb-1">Совет</div>
+            <div className="text-sm text-muted-foreground uppercase mb-1">3D AR Шутер</div>
             <p className="text-lg font-medium">
-              {cameraActive ? 'Двигайте телефон для поиска монстров!' : 'Наведите на монстров и стреляйте!'}
+              {cameraActive ? 'Зомби идут со всех сторон!' : 'Реалистичные 3D модели'}
             </p>
           </div>
         </div>
